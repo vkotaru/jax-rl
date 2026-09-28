@@ -38,7 +38,9 @@ from jaxrl.experts.lqr import LQRPolicy
 from jaxrl.utils.cart_pole_render import BG, GRID, TEXT
 
 NEVER = "#f0ece6"        # outside the ROA: never reaches the equilibrium
-RESET = "#ff7043"
+EPISODE = "#ff7043"      # BRS boundary at the episode horizon
+RESET = "#7a6a9b"        # the env's reset box -- its own colour, not the same
+BOUND = "#1f3a37"        # ROA boundary
 # Contour levels are quantiles of the reach times rather than fixed seconds:
 # with exponential convergence the times cluster, and a fixed ladder puts every
 # contour in the same place.
@@ -117,7 +119,7 @@ def style(ax):
     ax.title.set_color(TEXT)
 
 
-def draw(ax, xs, ys, T, reset_box, vmax, levels):
+def draw(ax, xs, ys, T, reset_box, vmax, levels, t_ep):
     cmap = plt.get_cmap("viridis").copy()
     cmap.set_bad(NEVER)
     m = ax.pcolormesh(xs, ys, np.ma.masked_invalid(T), cmap=cmap,
@@ -128,10 +130,12 @@ def draw(ax, xs, ys, T, reset_box, vmax, levels):
     ax.clabel(cs, fmt=lambda v: f"{v:g}s", fontsize=8.5, colors="white",
               inline_spacing=6)
     ax.contour(xs, ys, finite.astype(float), levels=[0.5],
-               colors=["#1f3a37"], linewidths=2.0)
+               colors=[BOUND], linewidths=2.0)
+    ax.contour(xs, ys, np.where(finite, T, 1e9), levels=[t_ep],
+               colors=[EPISODE], linewidths=2.4, zorder=7)
     w, h = reset_box
     ax.add_patch(plt.Rectangle((-w, -h), 2 * w, 2 * h, fill=False,
-                               ec=RESET, lw=2.0, zorder=6))
+                               ec=RESET, lw=2.2, ls="--", zorder=8))
     return m
 
 
@@ -150,9 +154,14 @@ def main(args):
                                 args.grid)
     x, xd, T_pos = slice_grid(env, ttr, 0, 2,
                               args.x_lim, args.xd_lim, args.grid)
+    xx, tt, T_xth = slice_grid(env, ttr, 0, 1,
+                               args.x_lim, np.radians(args.tilt_lim),
+                               args.grid)
 
     t_ep_s = args.episode_steps * env.dt
-    for nm, T in (("angle (theta, thetadot)", T_ang), ("cart  (x, xdot)", T_pos)):
+    for nm, T in (("angle (theta, thetadot)", T_ang),
+                  ("cart  (x, xdot)", T_pos),
+                  ("x-theta (x, theta)", T_xth)):
         fin = np.isfinite(T)
         print(f"\n  {nm} slice")
         print(f"    in the ROA          : {fin.mean():6.1%} of the window")
@@ -167,49 +176,60 @@ def main(args):
                 print(f"    BRS({L:>5.2f}s) / ROA : {frac:6.1%}")
 
     vmax = max(np.nanpercentile(T_ang[np.isfinite(T_ang)], 99),
-               np.nanpercentile(T_pos[np.isfinite(T_pos)], 99))
+               np.nanpercentile(T_pos[np.isfinite(T_pos)], 99),
+               np.nanpercentile(T_xth[np.isfinite(T_xth)], 99))
 
-    # A dedicated colourbar column, or its label lands on the third panel's.
-    fig = plt.figure(figsize=(16.4, 5.0), facecolor=BG)
-    gs = fig.add_gridspec(1, 5, width_ratios=[1, 1, 0.055, 0.16, 0.95],
-                          wspace=0.30, bottom=0.17, top=0.90)
-    axes = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1]),
-            fig.add_subplot(gs[0, 4])]
-    cax = fig.add_subplot(gs[0, 2])
+    # 2x2: three slices through the equilibrium plus the fill-in curve.
+    fig = plt.figure(figsize=(13.6, 9.6), facecolor=BG)
+    gs = fig.add_gridspec(2, 3, width_ratios=[1, 1, 0.045], wspace=0.28,
+                          hspace=0.34, left=0.07, right=0.93,
+                          bottom=0.09, top=0.93)
+    ax_ang = fig.add_subplot(gs[0, 0])
+    ax_pos = fig.add_subplot(gs[0, 1])
+    ax_xth = fig.add_subplot(gs[1, 0])
+    ax_fill = fig.add_subplot(gs[1, 1])
+    cax = fig.add_subplot(gs[:, 2])
+    axes = [ax_ang, ax_pos, ax_xth, ax_fill]
+
     allT = np.concatenate([T_ang[np.isfinite(T_ang)].ravel(),
-                           T_pos[np.isfinite(T_pos)].ravel()])
+                           T_pos[np.isfinite(T_pos)].ravel(),
+                           T_xth[np.isfinite(T_xth)].ravel()])
     levels = sorted(set(np.round(np.quantile(allT, QUANTILES), 2)))
-
     t_ep = args.episode_steps * env.dt
-    m = draw(axes[0], np.degrees(th), thd, T_ang,
-             (np.degrees(rs[1]), rs[3]), vmax, levels)
-    for a, T, xs_, ys_ in ((axes[0], T_ang, np.degrees(th), thd),
-                           (axes[1], T_pos, x, xd)):
-        a.contour(xs_, ys_, np.where(np.isfinite(T), T, 1e9), levels=[t_ep],
-                  colors=[RESET], linewidths=2.4, zorder=7)
-    axes[0].set_title("$(\\theta,\\dot\\theta)$ slice, $x=\\dot x=0$",
-                      fontsize=11.5)
-    axes[0].set_xlabel("tilt from upright (deg)", fontsize=11)
-    axes[0].set_ylabel("$\\dot\\theta$ (rad/s)", fontsize=11)
 
-    draw(axes[1], x, xd, T_pos, (rs[0], rs[2]), vmax, levels)
-    axes[1].set_title("$(x,\\dot x)$ slice, upright", fontsize=11.5)
-    axes[1].set_xlabel("$x$ (m)", fontsize=11)
-    axes[1].set_ylabel("$\\dot x$ (m/s)", fontsize=11)
+    m = draw(ax_ang, np.degrees(th), thd, T_ang,
+             (np.degrees(rs[1]), rs[3]), vmax, levels, t_ep)
+    ax_ang.set_title("$(\\theta,\\dot\\theta)$ slice, $x=\\dot x=0$",
+                     fontsize=11.5)
+    ax_ang.set_xlabel("tilt from upright (deg)", fontsize=11)
+    ax_ang.set_ylabel("$\\dot\\theta$ (rad/s)", fontsize=11)
 
-    # How the finite-horizon sets fill out the ROA.
-    ax = axes[2]
+    draw(ax_pos, x, xd, T_pos, (rs[0], rs[2]), vmax, levels, t_ep)
+    ax_pos.set_title("$(x,\\dot x)$ slice, upright", fontsize=11.5)
+    ax_pos.set_xlabel("$x$ (m)", fontsize=11)
+    ax_pos.set_ylabel("$\\dot x$ (m/s)", fontsize=11)
+
+    # Same axes as the occupancy figure, so the two can be read together.
+    draw(ax_xth, xx, np.degrees(tt), T_xth,
+         (rs[0], np.degrees(rs[1])), vmax, levels, t_ep)
+    ax_xth.set_title("$(x,\\theta)$ slice, at rest "
+                     "\u2014 same axes as the occupancy figure", fontsize=11.5)
+    ax_xth.set_xlabel("$x$ (m)", fontsize=11)
+    ax_xth.set_ylabel("tilt from upright (deg)", fontsize=11)
+
+    ax = ax_fill
     grid_T = np.linspace(0.05, min(vmax * 1.6, args.horizon * env.dt), 260)
     for T, nm, c in ((T_ang, "$(\\theta,\\dot\\theta)$", "#2f6f6a"),
-                     (T_pos, "$(x,\\dot x)$", "#c9a227")):
+                     (T_pos, "$(x,\\dot x)$", "#c9a227"),
+                     (T_xth, "$(x,\\theta)$", "#8c5a8c")):
         fin = np.isfinite(T)
-        frac = [(T <= t).sum() / fin.sum() for t in grid_T]
-        ax.plot(grid_T, frac, lw=2.2, color=c, label=nm)
+        ax.plot(grid_T, [(T <= t).sum() / fin.sum() for t in grid_T],
+                lw=2.2, color=c, label=nm)
     ax.axhline(1.0, lw=1.2, ls=":", color=TEXT)
-    ax.axvline(t_ep, lw=2.0, color=RESET, zorder=1)
+    ax.axvline(t_ep, lw=2.0, color=EPISODE, zorder=1)
     ax.annotate(f"episode horizon\n{args.episode_steps} steps = {t_ep:g}s",
                 xy=(t_ep, 0.06), xytext=(6, 0), textcoords="offset points",
-                color=RESET, fontsize=9, va="bottom")
+                color=EPISODE, fontsize=9, va="bottom")
     ax.set_ylim(0, 1.06)
     ax.set_xlim(0, grid_T[-1])
     ax.set_title("BRS$(T)$ fills the ROA", fontsize=11.5)
@@ -222,16 +242,27 @@ def main(args):
     for a in axes:
         style(a)
     cb = fig.colorbar(m, cax=cax)
-    cb.ax.yaxis.set_label_position("left")
-    cb.ax.yaxis.set_ticks_position("left")
     cb.set_label("time to reach the equilibrium (s)", color=TEXT, fontsize=10)
     cb.ax.tick_params(colors=TEXT, labelsize=8.5)
     cb.outline.set_edgecolor(GRID)
-    fig.text(0.5, 0.035,
-             "dark outline: ROA boundary    orange: BRS at the episode "
-             "horizon, and the reset box    white: BRS(T) contours    "
-             "pale: never reaches",
-             color=TEXT, fontsize=9.5, ha="center")
+
+    handles = [
+        plt.Line2D([], [], color=BOUND, lw=2.0, label="ROA boundary"),
+        plt.Line2D([], [], color=EPISODE, lw=2.4,
+                   label=f"BRS({t_ep:g}s), the episode horizon"),
+        plt.Line2D([], [], color=RESET, lw=2.2, ls="--",
+                   label="the env's reset box"),
+        # the contours are white on colour; a white swatch would vanish here
+        plt.Line2D([], [], color="#b9c4c1", lw=1.4,
+                   label="BRS(T) contours, labelled in seconds"),
+        plt.Line2D([], [], color=NEVER, lw=7, label="never reaches"),
+    ]
+    leg2 = fig.legend(handles=handles, loc="lower center", ncol=5,
+                      frameon=False, fontsize=9.5,
+                      bbox_to_anchor=(0.5, 0.005))
+    for t in leg2.get_texts():
+        t.set_color(TEXT)
+
     if args.save:
         fig.savefig(args.save, dpi=args.dpi, facecolor=BG, bbox_inches="tight")
         print(f"\nwrote {args.save}")
