@@ -41,3 +41,24 @@ def make_update(policy, optimizer):
         return optax.apply_updates(params, updates), opt_state, loss
 
     return update
+
+
+def train(update,
+          params,
+          opt_state,
+          X,
+          Y,
+          key,
+          n_steps,
+          batch_size,
+          verbose=True):
+    """Minibatch SGD on (X, Y). Returns (params, opt_state, losses)."""
+    losses = []
+    for i in range(n_steps):
+        key, sub = jax.random.split(key)
+        idx = jax.random.randint(sub, (batch_size, ), 0, X.shape[0])
+        params, opt_state, loss = update(params, opt_state, X[idx], Y[idx])
+        losses.append(float(loss))
+        if verbose and i % max(1, n_steps // 10) == 0:
+            print(f"  step {i:6}/{n_steps}  loss {float(loss):9.4f}")
+    return params, opt_state, losses

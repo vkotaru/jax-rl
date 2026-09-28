@@ -20,6 +20,11 @@ class Trajectory(NamedTuple):
     obs: jax.Array  # (horizon, 4)
     action: jax.Array  # (horizon, 1)
 
+    def flatten(self):
+        """Supervised pairs: (n, horizon, d) -> (n*horizon, d)."""
+        return (self.obs.reshape(-1, self.obs.shape[-1]),
+                self.action.reshape(-1, self.action.shape[-1]))
+
 
 def sample_trajectory(key, policy_fn, env, horizon) -> Trajectory:
     """Roll out one episode of exactly `horizon` steps.

@@ -7,7 +7,8 @@ from jaxrl.envs.cart_pole import CartPoleEnv
 from jaxrl.experts.lqr import LQRPolicy
 from jaxrl.policies.gaussian import GaussianPolicy
 from jaxrl.algos import behavior_cloning as bc
-from jaxrl.infra.rollout import sample_trajectories
+from jaxrl.algos import dagger
+from jaxrl.infra.rollout import sample_trajectories, sample_trajectory
 from jaxrl.utils.cart_pole_render import compare_grid
 
 
@@ -62,10 +63,15 @@ def parse_args():
                    type=str,
                    default=None,
                    help="also write the animation to this path")
-    p.add_argument("--raw-obs",
-                   action="store_true",
-                   help="feed the policy unscaled observations")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--n-rollouts",
+                   type=int,
+                   default=1,
+                   help="learner episodes collected per DAgger iteration")
+    p.add_argument("--n-iters",
+                   type=int,
+                   default=10,
+                   help="number of iterations for dagger")
     return p.parse_args()
 
 
@@ -81,7 +87,7 @@ def main(args):
     # Confirm lqr Gain
     print(expert_lqr.K)
 
-    # Generat expert dat
+    # Generat expert data
     key = jax.random.key(args.seed)
     data_key, init_key, train_key = jax.random.split(key, 3)
     expert_data = sample_trajectories(data_key,
@@ -95,13 +101,11 @@ def main(args):
     print(f"dataset: {expert_states.shape} {expert_actions.shape}")
 
     # Policy
-    # The angle varies about 25x less than the cart position, so unscaled the
-    # one observation that decides the force is the one the net can barely see.
     policy = GaussianPolicy(4,
                             1,
                             args.hidden,
-                            obs_mean=None if args.raw_obs else expert_states.mean(0),
-                            obs_std=None if args.raw_obs else expert_states.std(0) + 1e-6)
+                            obs_mean=expert_states.mean(0),
+                            obs_std=expert_states.std(0) + 1e-6)
     params = policy.init(init_key)
 
     # Train
@@ -114,16 +118,38 @@ def main(args):
     n_steps = args.n_steps if args.n_steps is not None else args.epochs * steps_per_epoch
     print(f"{steps_per_epoch} steps/epoch, training for {n_steps} steps")
 
-    losses = []
-    for i in range(n_steps):
-        train_key, sub = jax.random.split(train_key)
-        idx = jax.random.randint(sub, (batch_size, ), 0,
-                                 expert_states.shape[0])
-        params, opt_state, loss = update(params, opt_state, expert_states[idx],
-                                         expert_actions[idx])
-        losses.append(float(loss))
-        if i % max(1, n_steps // 10) == 0:
-            print(f"  step {i:6}/{n_steps}  loss {float(loss):9.4f}")
+    params, opt_state, losses = bc.train(update, params, opt_state,
+                                         expert_states, expert_actions,
+                                         train_key, n_steps, batch_size)
+
+    rollout_key = jax.random.key(args.seed + 2000)
+    for i in range(args.n_iters):
+        rollout_key, rollout_sub_key = jax.random.split(rollout_key)
+        rollout_traj = sample_trajectories(
+            rollout_sub_key,
+            lambda k, s: policy.mean_action(params, s),
+            env,
+            n=args.n_rollouts,
+            horizon=args.horizon)
+        rollout_X, rollout_Y = dagger.relabel(expert_lqr,
+                                              rollout_traj).flatten()
+        expert_states = jnp.concatenate([expert_states, rollout_X])
+        expert_actions = jnp.concatenate([expert_actions, rollout_Y])
+
+        # a fresh key each round, or every retrain walks the same minibatch
+        # sequence through a dataset that has changed underneath it
+        train_key, iter_key = jax.random.split(train_key)
+        params, opt_state, losses = bc.train(update,
+                                             params,
+                                             opt_state,
+                                             expert_states,
+                                             expert_actions,
+                                             iter_key,
+                                             n_steps,
+                                             batch_size,
+                                             verbose=False)
+        print(f"  iter {i + 1:2}/{args.n_iters}  "
+              f"pairs {expert_states.shape[0]:6}  loss {losses[-1]:8.4f}")
 
     # ---- evaluate ---------------------------------------------------------
     # How well does it fit, on the states it was trained on?
@@ -148,7 +174,7 @@ def main(args):
                             env,
                             n=args.n_eval,
                             horizon=args.horizon),
-        "BC":
+        "DAgger":
         sample_trajectories(eval_key,
                             lambda k, s: policy.mean_action(params, s),
                             env,

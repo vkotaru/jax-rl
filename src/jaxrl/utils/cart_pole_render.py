@@ -131,8 +131,9 @@ def _screen_inches(default=(16.0, 9.0)):
 
 
 def compare_grid(obs_by_name, l, n=None, dt=None, stride=4, fps=50,
-                 alphas=None, colors=None, show=True, pole_scale=1.0,
-                 screen_frac=0.5, figsize=None, trail_len=60, save=None):
+                 alphas=None, colors=None, show=True, pole_scale=2.0,
+                 screen_frac=0.5, figsize=None, trail_len=40, span=None,
+                 save=None):
     """Animate several episodes side by side, all policies on the same axes.
 
     `obs_by_name` maps a label to a batched obs array of shape
@@ -147,6 +148,11 @@ def compare_grid(obs_by_name, l, n=None, dt=None, stride=4, fps=50,
 
     The window defaults to `screen_frac` of each screen dimension, with the
     content aspect preserved inside that box. Pass `figsize` to override.
+
+    `span` is the half-width of the x-window in metres. Left unset it grows
+    to hold however far the carts travelled, so a policy that lets one run
+    away yields a wider, shorter figure than one that balances. Set it to
+    render different policies at matching dimensions.
 
     `trail_len` frames of the bob's recent path are drawn behind it, fading
     out, so the shape of a divergence is visible in a still frame.
@@ -173,8 +179,10 @@ def compare_grid(obs_by_name, l, n=None, dt=None, stride=4, fps=50,
 
     # One x-window for every panel, so panels are comparable and the figure can
     # be sized to match: with aspect="equal" a mismatched box is all whitespace.
-    span = max(float(np.abs(np.concatenate([a[:, :, 0].ravel() for a in arrs])).max()),
-               0.6) + l * 1.3
+    if span is None:
+        span = max(float(np.abs(np.concatenate([a[:, :, 0].ravel()
+                                                for a in arrs])).max()),
+                   0.6) + l * 1.3
     draw_l = l * pole_scale
     yspan = draw_l * 2.7
 
