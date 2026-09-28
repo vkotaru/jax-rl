@@ -64,6 +64,7 @@ def parse_args():
                    help="cart position axis limit, metres")
     p.add_argument("--th-lim", type=float, default=60.0,
                    help="tilt axis limit, degrees from upright")
+    p.add_argument("--dpi", type=int, default=220)
     p.add_argument("--save", type=str, default=None)
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args()
@@ -115,7 +116,7 @@ def style(ax):
         ax.spines[side].set_visible(False)
     for side in ("left", "bottom"):
         ax.spines[side].set_color(GRID)
-    ax.tick_params(colors=TEXT, labelsize=8, length=3, color=GRID)
+    ax.tick_params(colors=TEXT, labelsize=9.5, length=4, color=GRID)
     ax.xaxis.label.set_color(TEXT)
     ax.yaxis.label.set_color(TEXT)
     ax.title.set_color(TEXT)
@@ -160,7 +161,7 @@ def main(args):
 
     # ---- figure ---------------------------------------------------------
     names = list(visited)
-    fig = plt.figure(figsize=(13.5, 7.2), facecolor=BG)
+    fig = plt.figure(figsize=(14.0, 7.8), facecolor=BG)
     outer = fig.add_gridspec(2, 1, height_ratios=[1.0, 1.25], hspace=0.34)
     top = outer[0].subgridspec(1, 2, wspace=0.2)
     bottom = outer[1].subgridspec(1, len(names), wspace=0.12)
@@ -176,14 +177,14 @@ def main(args):
             # exactly where the interesting policies differ. Out-of-window
             # mass is reported in the table instead.
             ax.hist(v, bins=args.bins, range=(-lim, lim),
-                    density=True, histtype="step", lw=1.8,
+                    density=True, histtype="step", lw=2.1,
                     color=COLOURS[name], label=name)
-        ax.set_xlabel(label)
-        ax.set_ylabel("density")
+        ax.set_xlabel(label, fontsize=11)
+        ax.set_ylabel("density", fontsize=11)
         ax.set_xlim(-lim, lim)
         style(ax)
         if col == 0:
-            leg = ax.legend(frameon=False, fontsize=8, loc="upper right")
+            leg = ax.legend(frameon=False, fontsize=10, loc="upper right")
             for t in leg.get_texts():
                 t.set_color(TEXT)
 
@@ -247,10 +248,10 @@ def main(args):
         im = ax.imshow(g, origin="lower", aspect="auto", cmap="magma_r",
                        norm=LogNorm(vmin=1, vmax=vmax),
                        extent=[rng[0][0], rng[0][1], rng[1][0], rng[1][1]])
-        ax.set_title(name, fontsize=9.5, pad=6)
-        ax.set_xlabel("$x$ (m)")
+        ax.set_title(name, fontsize=11.5, pad=7)
+        ax.set_xlabel("$x$ (m)", fontsize=11)
         if col == 0:
-            ax.set_ylabel("tilt (deg)")
+            ax.set_ylabel("tilt (deg)", fontsize=11)
         else:
             ax.set_yticklabels([])
         ax.axhline(0, lw=0.8, color=GRID, zorder=3)
@@ -258,14 +259,15 @@ def main(args):
         style(ax)
 
     cb = fig.colorbar(im, ax=fig.axes[-len(names):], fraction=0.015, pad=0.012)
-    cb.set_label("states per bin", color=TEXT, fontsize=8)
-    cb.ax.tick_params(colors=TEXT, labelsize=7)
+    cb.set_label("states per bin", color=TEXT, fontsize=10)
+    cb.ax.tick_params(colors=TEXT, labelsize=8.5)
     cb.outline.set_edgecolor(GRID)
 
     fig.suptitle("Where each policy actually spends its time",
-                 color=TEXT, fontsize=11, y=0.975)
+                 color=TEXT, fontsize=13, y=0.975)
     if args.save:
-        fig.savefig(args.save, dpi=140, facecolor=BG, bbox_inches="tight")
+        fig.savefig(args.save, dpi=args.dpi, facecolor=BG,
+                    bbox_inches="tight")
         print(f"\nwrote {args.save}")
     else:
         plt.show()
